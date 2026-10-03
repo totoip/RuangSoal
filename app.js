@@ -73,12 +73,17 @@
   function showSignedIn() {
     $('#login-screen').hidden = true; $('#app-shell').hidden = false;
     $('#user-name').textContent = profile?.name || 'Guru'; $('#user-avatar').textContent = (profile?.name || 'G').trim().charAt(0).toUpperCase();
+    $('#account-email').textContent = profile?.email || 'Mode pratinjau';
     $('#welcome-name').textContent = profile?.name ? ', ' + profile.name.split(' ')[0] : ', Guru';
     $$('.admin-only').forEach(item => { const guestSettings = profile?.guest && item.dataset.page === 'pengaturan'; item.hidden = !(profile?.role === 'admin' || guestSettings); });
     $('#account-status').textContent = `Masuk sebagai ${profile?.email || 'mode pratinjau'} · ${profile?.role || 'demo'}.`;
     updateDashboard(); applyOAuthConfig();
   }
-  function showLogin() { $('#app-shell').hidden = true; $('#login-screen').hidden = false; applyOAuthConfig(); }
+  function showLogin() { $('#account-menu').hidden = true; $('#account-menu-toggle').setAttribute('aria-expanded', 'false'); $('#app-shell').hidden = true; $('#login-screen').hidden = false; applyOAuthConfig(); }
+  function setLoginLoading(active, message) {
+    $('#login-loading').hidden = !active;
+    if (message) $('#login-loading').querySelector('b').textContent = message;
+  }
   function applyOAuthConfig() {
     const hint = $('#login-hint');
     if (!config.oauthClientId) { hint.textContent = 'Login Google aktif setelah admin mengisi Client ID di config.js.'; return; }
@@ -93,6 +98,8 @@
     wait();
   }
   async function onGoogleCredential(response) {
+    setLoginLoading(true, 'Menyiapkan ruang kerja Anda');
+    $('#login-hint').textContent = 'Sedang memverifikasi akun Google dan memuat data Anda…';
     try {
       const payload = JSON.parse(atob(response.credential.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')));
       const aud = payload.aud;
@@ -107,17 +114,19 @@
       const message = err && err.message ? err.message : 'Login gagal. Coba muat ulang halaman.';
       $('#login-hint').textContent = 'Login belum berhasil: ' + message;
       toast(message);
-    }
+    } finally { setLoginLoading(false); }
   }
   async function refreshPacks() {
     if (profile?.guest) { packs = read(STORE.packs, []); return; }
     const response = await callApi('listPacks'); packs = response.packs || []; updateDashboard();
   }
   async function resumeSession() {
+    setLoginLoading(true, 'Memulihkan sesi Anda');
     try {
       const session = await callApi('me'); profile = { ...profile, ...session.user };
       await refreshPacks(); write(STORE.profile, profile); showSignedIn();
-    } catch (error) { profile = null; packs = []; localStorage.removeItem(STORE.profile); showLogin(); toast(error.message); }
+    } catch (error) { profile = null; packs = []; localStorage.removeItem(STORE.profile); setLoginLoading(false); showLogin(); toast(error.message); }
+    finally { setLoginLoading(false); }
   }
   async function loadAdminUsers() {
     const holder = $('#user-list'); holder.textContent = 'Memuat daftar…';
@@ -265,18 +274,20 @@
     document.addEventListener('click', event => { const link = event.target.closest('[data-page]'); if (link) { event.preventDefault(); page(link.dataset.page); } });
     $('#preview-button').addEventListener('click', () => { profile = { name: 'Guru Demo', email: '', idToken: '', guest: true }; showSignedIn(); page('beranda'); toast('Mode pratinjau. Paket tersimpan di perangkat ini saja.'); });
     $('#menu-toggle').addEventListener('click', () => $('.sidebar').classList.toggle('open'));
+    $('#account-menu-toggle').addEventListener('click', event => { event.stopPropagation(); const menu = $('#account-menu'); menu.hidden = !menu.hidden; $('#account-menu-toggle').setAttribute('aria-expanded', String(!menu.hidden)); });
+    document.addEventListener('click', event => { if (!event.target.closest('.profile')) { $('#account-menu').hidden = true; $('#account-menu-toggle').setAttribute('aria-expanded', 'false'); } });
     $('#signout-button').addEventListener('click', () => { profile = null; packs = []; generatedPack = null; $('#question-form').reset(); $('#result-content').replaceChildren(); $('#result-toolbar').hidden = true; page('beranda'); localStorage.removeItem(STORE.profile); showLogin(); });
     $('#question-form').addEventListener('input', event => { if (event.target.matches('.type-row input[type=number],.type-row input[type=checkbox]')) updateTotal(); else saveDraft(); });
     $('#question-form').addEventListener('change', () => { saveDraft(); updateTotal(); });
     $('#question-form').addEventListener('submit', event => { event.preventDefault(); const data = formData(); if (!$('#question-form').reportValidity()) return; if (!data.bloom.length) { toast('Pilih minimal satu level Taksonomi Bloom.'); return; } if (!data.total || !data.types.length) { toast('Pilih minimal satu jenis soal dan isi jumlahnya.'); return; } if (data.total > 100) { toast('Jumlah seluruh soal maksimal 100 dalam satu paket.'); return; } page('naskah'); });
     $('#paper-form').addEventListener('submit', async event => {
       event.preventDefault(); const data = makePromptData(); page('hasil');
-      $('#result-toolbar').hidden = true; $('#generation-status').hidden = false; $('#generation-status').textContent = 'Sedang menyusun soal. Mohon tunggu…'; $('#result-content').innerHTML = '';
+      $('#result-toolbar').hidden = true; $('#generation-status').hidden = false; $('#generation-status').className = 'notice is-info is-loading'; $('#generation-status').setAttribute('role', 'status'); $('#generation-status').textContent = 'Gemini sedang menyusun soal. Proses ini bisa memerlukan waktu hingga satu menit…'; $('#result-content').innerHTML = '';
       try {
         generatedPack = await generate(data); generatedPack.title = `${data.subject} · ${data.material}`;
         renderResult(generatedPack); $('#generation-status').hidden = generatedPack.demo ? false : true;
-        if (generatedPack.demo) $('#generation-status').innerHTML = '<b>Mode pratinjau:</b> URL Google Apps Script belum diatur. Contoh soal ini belum dibuat AI. Masukkan URL di Pengaturan untuk mengaktifkan generasi soal.';
-      } catch (error) { $('#generation-status').hidden = false; $('#generation-status').innerHTML = `<b>Belum berhasil membuat soal.</b> ${esc(error.message)} Periksa URL Apps Script dan izin deployment di Pengaturan.`; }
+        if (generatedPack.demo) { $('#generation-status').className = 'notice is-info'; $('#generation-status').innerHTML = '<b>Mode pratinjau:</b> Contoh ini belum dibuat AI. Hubungkan URL Apps Script untuk mengaktifkan generator.'; }
+      } catch (error) { $('#generation-status').hidden = false; $('#generation-status').className = 'notice is-error'; $('#generation-status').innerHTML = `<b>Belum berhasil membuat soal.</b> ${esc(error.message || 'Terjadi kesalahan. Silakan coba lagi.')}`; }
     });
     $('#settings-page').addEventListener('click', event => { if (event.target.matches('[data-refresh-config]')) showConfig(); });
     $('#add-user-form').addEventListener('submit', async event => {
