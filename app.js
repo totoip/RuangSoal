@@ -13,45 +13,42 @@
   let generatedPack = null;
   let toastTimer;
   const bridgeRequests = new Map();
-  let bridgeReady = false;
-  let bridgeReadyCallbacks = [];
 
   function toast(message) { const el = $('#toast'); el.textContent = message; el.classList.add('show'); clearTimeout(toastTimer); toastTimer = setTimeout(() => el.classList.remove('show'), 3000); }
   function onBridgeMessage(event) {
-    const frame = $('#gas-bridge');
     let host; try { host = new URL(event.origin).hostname; } catch { return; }
-    if (!frame || event.source !== frame.contentWindow || !(host === 'script.google.com' || host.endsWith('.googleusercontent.com'))) return;
+    if (!(host === 'script.google.com' || host.endsWith('.googleusercontent.com'))) return;
     const message = event.data;
     if (!message || message.channel !== 'ruangsoal') return;
-    if (message.action === 'ready') { bridgeReady = true; bridgeReadyCallbacks.splice(0).forEach(resolve => resolve()); return; }
     const pending = bridgeRequests.get(message.id);
     if (pending) { clearTimeout(pending.timer); bridgeRequests.delete(message.id); pending.resolve(message.result); }
   }
-  function ensureBridge() {
-    const frame = $('#gas-bridge');
+  function bridgeUrl() {
     if (!config.gasUrl) return Promise.reject(new Error('Masukkan URL Google Apps Script di Pengaturan.'));
     let url;
     try { url = new URL(config.gasUrl); } catch { return Promise.reject(new Error('URL Google Apps Script tidak valid.')); }
     if (url.protocol !== 'https:' || url.hostname !== 'script.google.com' || !url.pathname.includes('/macros/s/')) return Promise.reject(new Error('Gunakan URL deployment Apps Script resmi yang diawali https://script.google.com/macros/s/.'));
-    window.addEventListener('message', onBridgeMessage);
-    if (frame.dataset.url !== config.gasUrl) { bridgeReady = false; bridgeRequests.forEach(item => { clearTimeout(item.timer); item.reject(new Error('Koneksi Apps Script berubah.')); }); bridgeRequests.clear(); frame.dataset.url = config.gasUrl; frame.src = config.gasUrl; }
-    if (bridgeReady) return Promise.resolve();
-    return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error('Koneksi ke Apps Script timeout. Periksa URL dan deployment web app.')), 15000);
-      const check = () => { if (!bridgeReady) return; clearTimeout(timer); resolve(); };
-      bridgeReadyCallbacks.push(check);
-      frame.onload = check;
-      check();
-    });
+    return Promise.resolve(url.href);
   }
   async function callBridge(request) {
-    await ensureBridge();
-    const id = crypto.randomUUID();
+    const endpoint = await bridgeUrl();
     const frame = $('#gas-bridge');
+    if (!frame) throw new Error('Frame koneksi Apps Script tidak ditemukan. Muat ulang aplikasi.');
+    const frameName = 'ruangsoal-gas-bridge';
+    frame.name = frameName;
+    const id = crypto.randomUUID();
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => { bridgeRequests.delete(id); reject(new Error('Permintaan ke Apps Script melewati batas waktu.')); }, 120000);
       bridgeRequests.set(id, { resolve, reject, timer });
-      frame.contentWindow.postMessage({ channel: 'ruangsoal', action: 'generate', id, request }, '*');
+      window.addEventListener('message', onBridgeMessage);
+      const form = document.createElement('form');
+      form.method = 'post'; form.action = endpoint; form.target = frameName; form.hidden = true;
+      [[ 'id', id ], [ 'origin', window.location.origin ], [ 'request', JSON.stringify(request) ]].forEach(([name, value]) => {
+        const input = document.createElement('input'); input.type = 'hidden'; input.name = name; input.value = value; form.appendChild(input);
+      });
+      document.body.appendChild(form);
+      form.submit();
+      form.remove();
     });
   }
   async function callApi(action, data = {}) {
