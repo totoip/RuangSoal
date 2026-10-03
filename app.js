@@ -304,19 +304,25 @@
       group.questions.forEach(q => {
         const imageSrc = q.imageData || q.imageUrl || (q.imageSvg ? 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(q.imageSvg) : '');
         const safeImage = /^data:image\/(png|jpeg|webp|svg\+xml);/i.test(imageSrc) || /^https:\/\//i.test(imageSrc) ? imageSrc : '';
-        html += `<li class="paper-question" value="${q.number || questions.indexOf(q) + 1}"><div>${esc(q.question || '')}</div>${q.options?.length ? `<ol class="answer-options" type="a">${q.options.map(option => `<li>${esc(option)}</li>`).join('')}</ol>` : `<div class="response-lines ${q.type === 'Uraian' ? 'long-response' : ''}"></div>`}${safeImage ? `<img class="question-illustration" src="${esc(safeImage)}" alt="Ilustrasi soal">` : ''}</li>`;
+        html += `<li class="paper-question" value="${q.number || questions.indexOf(q) + 1}"><div>${esc(q.question || '')}</div>${q.options?.length ? `<ol class="answer-options" type="a">${q.options.map(option => `<li>${esc(option)}</li>`).join('')}</ol>` : ''}${safeImage ? `<img class="question-illustration" src="${esc(safeImage)}" alt="Ilustrasi soal">` : ''}</li>`;
       });
       html += '</ol></section>';
     });
     html += '</section>';
     if (paper.includeBlueprint) html += `<section class="paper-page blueprint-page">${examHeader(pack, paper, 'Kisi-kisi Soal')}<table class="blueprint-table"><thead><tr><th>No.</th><th>Tujuan Pembelajaran</th><th>Materi</th><th>Indikator Soal</th><th>Level Kognitif</th><th>Bentuk</th></tr></thead><tbody>${questions.map((q, i) => `<tr><td>${i + 1}</td><td>${esc(pack.objective || '')}</td><td>${esc(pack.material || '')}</td><td>${esc(q.indicator || q.question || '')}</td><td>${esc(q.bloom || pack.bloom?.[0] || '')}</td><td>${esc(q.type || '')}</td></tr>`).join('')}</tbody></table></section>`;
     if (paper.includeKey) {
+      const multipleChoice = questions.map((q, i) => ({ q, number: q.number || i + 1 })).filter(item => String(item.q.type || '').startsWith('Pilihan ganda'));
+      const otherAnswers = questions.map((q, i) => ({ q, number: q.number || i + 1 })).filter(item => !String(item.q.type || '').startsWith('Pilihan ganda'));
       const keyRows = [];
-      for (let i = 0; i < questions.length; i += 5) {
-        const chunk = questions.slice(i, i + 5);
-        keyRows.push(`<tr>${chunk.map((q, offset) => { const match = String(q.answer || '').trim().match(/^[a-e](?=$|[\s.)-])/i); const answer = q.type?.startsWith('Pilihan ganda') ? (match ? match[0].toLowerCase() : '—') : q.answer || '—'; return `<td class="key-number">${i + offset + 1}</td><td class="key-answer">${esc(answer)}</td>`; }).join('')}${Array.from({ length: 5 - chunk.length }, () => '<td></td><td></td>').join('')}</tr>`);
+      for (let i = 0; i < multipleChoice.length; i += 10) {
+        const left = multipleChoice.slice(i, i + 5), right = multipleChoice.slice(i + 5, i + 10);
+        for (let row = 0; row < 5; row++) {
+          const cell = item => { if (!item) return '<td></td><td></td>'; const match = String(item.q.answer || '').trim().match(/^[a-e](?=$|[\s.)-])/i); return `<td class="key-number">${item.number}</td><td class="key-answer">${esc(match ? match[0].toLowerCase() : '—')}</td>`; };
+          keyRows.push(`<tr>${cell(left[row])}${cell(right[row])}</tr>`);
+        }
       }
-      html += `<section class="paper-page answer-page">${examHeader(pack, paper, 'Kunci Jawaban')}<table class="answer-key-table"><thead><tr>${Array.from({ length: 5 }, () => '<th>No.</th><th>Kunci</th>').join('')}</tr></thead><tbody>${keyRows.join('')}</tbody></table><p class="key-note">Kunci pilihan ganda ditampilkan dengan huruf opsi.</p></section>`;
+      const otherList = otherAnswers.length ? `<h2 class="other-key-title">Kunci jawaban jenis soal lainnya</h2><ol class="other-key-list">${otherAnswers.map(({ q, number }) => `<li value="${number}"><b>${esc(q.type || 'Soal')}:</b> ${esc(q.answer || '—')}</li>`).join('')}</ol>` : '';
+      html += `<section class="paper-page answer-page">${examHeader(pack, paper, 'Kunci Jawaban')}${multipleChoice.length ? `<table class="answer-key-table"><thead><tr><th>No.</th><th>Kunci</th><th>No.</th><th>Kunci</th></tr></thead><tbody>${keyRows.join('')}</tbody></table>` : ''}${otherList}</section>`;
     }
     return html;
   }
@@ -325,22 +331,58 @@
     $('#result-toolbar').hidden = false;
   }
   function wordDocument(pack) {
-    const style = `@page{size:21.5cm 33cm;margin:16mm 15mm}*{box-sizing:border-box}body{font:10.5pt/1.45 Arial,sans-serif;color:#111;margin:0}.paper-page{width:100%;page-break-after:always;break-after:page}.paper-page:last-child{page-break-after:auto;break-after:auto}.exam-header{text-align:center;margin-bottom:18px}.institution-heading{display:grid;grid-template-columns:72px 1fr 72px;align-items:center;gap:12px}.school-logo,.school-logo-placeholder{display:block;width:64px;height:64px;object-fit:contain;margin:auto}.institution-copy{font-weight:700}.institution-line{font-size:11pt;line-height:1.2}.institution-line.school-name{font-size:14pt;text-transform:uppercase}.institution-contact{font-size:8.5pt;font-weight:400;margin-top:4px}.header-rule{height:5px;border-top:1px solid #111;border-bottom:3px solid #111;margin:8px 0 12px}.exam-header h1{font-size:13pt;text-transform:uppercase;margin:0}.exam-semester{font-weight:700;font-size:10pt}.sheet-subtitle{font-weight:700;margin-top:3px}.exam-facts{display:grid;grid-template-columns:1fr 1fr;gap:5px 24px;text-align:left;margin-top:16px;font-size:9.5pt}.exam-facts>div{display:grid;grid-template-columns:105px 1fr;gap:8px}.general-instruction-block{margin:16px 0}.general-instruction-block>b{display:block}.general-instructions{margin:3px 0;padding-left:27px}.general-instructions li{padding-left:4px}.question-group{margin:15px 0}.question-group h2{font-size:10.5pt;margin:0 0 7px;display:flex;gap:8px}.question-list{padding-left:29px;margin:0}.paper-question{padding-left:3px;margin:0 0 13px;page-break-inside:avoid;break-inside:avoid}.answer-options{list-style-type:lower-alpha;padding-left:28px;margin:5px 0 0}.answer-options li{padding:1px 3px}.question-illustration{display:block;max-width:78%;max-height:250px;object-fit:contain;margin:9px auto}.response-lines{height:25px;border-bottom:1px dotted #999;margin:7px 0}.response-lines.long-response{height:100px;border-bottom:0;background:repeating-linear-gradient(to bottom,transparent 0,transparent 24px,#bbb 25px)}.blueprint-table,.answer-key-table{width:100%;border-collapse:collapse;table-layout:fixed;font-size:8.5pt}.blueprint-table th,.blueprint-table td,.answer-key-table th,.answer-key-table td{border:1px solid #555;padding:5px;vertical-align:top;overflow-wrap:anywhere}.blueprint-table th{background:#f0f2f1;text-align:center}.blueprint-table th:nth-child(1){width:5%}.blueprint-table th:nth-child(2){width:22%}.blueprint-table th:nth-child(3){width:15%}.blueprint-table th:nth-child(4){width:34%}.blueprint-table th:nth-child(5){width:12%}.blueprint-table th:nth-child(6){width:12%}.answer-key-table{font-size:10pt;margin-top:18px}.answer-key-table th{text-align:center;background:#f0f2f1}.answer-key-table td{text-align:center;height:32px}.answer-key-table .key-number{width:7%;font-weight:700}.answer-key-table .key-answer{width:13%;font-weight:700;text-transform:lowercase}.key-note{font-size:8pt;color:#555;margin-top:10px}`;
-    return `<!doctype html><html><head><meta charset="utf-8"><style>${style}</style></head><body>${questionPaperHtml(pack)}</body></html>`;
+    const paper = pack.paper || {}, questions = pack.questions || [], groups = orderedQuestionGroups(pack, questions);
+    const style = `@page{size:21.5cm 33cm;margin:1.6cm 1.5cm}body{font-family:Arial,sans-serif;font-size:11pt;line-height:1.4;color:#111;margin:0}.paper-page{page-break-after:always}.paper-page:last-child{page-break-after:auto}table{border-collapse:collapse}.exam-header{margin-bottom:16pt}.institution-heading{width:100%;border-bottom:3px double #111}.institution-heading td{vertical-align:middle;padding:0 0 8pt}.institution-logo{width:74px;height:70px;object-fit:contain}.institution-copy{text-align:center;font-weight:bold}.institution-line{font-size:11pt}.institution-line.school-name{font-size:14pt;text-transform:uppercase}.institution-contact{font-size:9pt;font-weight:normal;margin-top:3pt}.exam-title{text-align:center;font-size:15pt;font-weight:bold;text-transform:uppercase;margin:12pt 0 2pt}.exam-semester{text-align:center;font-weight:bold;margin-bottom:12pt}.sheet-subtitle{text-align:center;font-weight:bold;margin:3pt 0 10pt}.exam-facts{width:100%;margin:10pt 0 14pt}.exam-facts td{width:25%;padding:3pt 5pt 3pt 0;vertical-align:top}.exam-facts .fact-label{color:#333}.exam-facts .fact-value{font-weight:bold}.general-instruction-block{margin:12pt 0}.general-instruction-block b{display:block}.general-instructions{margin:3pt 0;padding-left:24pt}.question-group{margin:12pt 0}.question-group h2{font-size:11pt;margin:0 0 7pt}.question-list{padding-left:28pt;margin:0}.paper-question{padding-left:3pt;margin:0 0 12pt;page-break-inside:avoid}.answer-options{list-style-type:lower-alpha;padding-left:24pt;margin:4pt 0 0}.answer-options li{padding:1pt 2pt}.question-illustration{display:block;max-width:75%;max-height:240px;margin:8pt auto}.blueprint-table,.answer-key-table{width:100%;font-size:9pt;table-layout:fixed}.blueprint-table th,.blueprint-table td,.answer-key-table th,.answer-key-table td{border:1px solid #555;padding:5pt;vertical-align:top}.blueprint-table th,.answer-key-table th{background:#eee;text-align:center}.answer-key-table{font-size:10pt;margin-top:12pt}.answer-key-table td{text-align:center;height:23pt}.answer-key-table .key-number,.answer-key-table .key-answer{width:25%;font-weight:bold}.other-key-title{font-size:11pt;margin:18pt 0 6pt}.other-key-list{padding-left:25pt}.other-key-list li{padding:3pt 0}`;
+    const header = subtitle => {
+      const identity = [paper.government, paper.department, paper.school].filter(Boolean).map((line, index, arr) => `<div class="institution-line${line === paper.school ? ' school-name' : ''}">${esc(line)}</div>`).join('');
+      const logo = paper.logo ? `<img class="institution-logo" src="${esc(paper.logo)}" alt="Logo sekolah">` : '';
+      return `<header class="exam-header"><table class="institution-heading"><tr><td style="width:82px;text-align:center">${logo}</td><td class="institution-copy">${identity}<div class="institution-contact">${esc([paper.address, paper.contact].filter(Boolean).join(' · '))}</div></td><td style="width:82px"></td></tr></table><div class="exam-title">${esc(paper.title || 'Asesmen')}</div><div class="exam-semester">${esc(paper.semester || '')}${paper.year ? ' · Tahun Ajaran ' + esc(paper.year) : ''}</div>${subtitle ? `<div class="sheet-subtitle">${esc(subtitle)}</div>` : ''}<table class="exam-facts"><tr><td class="fact-label">Mata Pelajaran</td><td class="fact-value">${esc(pack.subject || '—')}</td><td class="fact-label">Hari / Tanggal</td><td class="fact-value">${esc(paper.date || '________________________')}</td></tr><tr><td class="fact-label">Kelas</td><td class="fact-value">${esc(pack.grade || '—')}</td><td class="fact-label">Alokasi Waktu</td><td class="fact-value">${esc(paper.duration || '________________')}</td></tr></table></header>`;
+    };
+    let html = `<section class="paper-page">${header('')}<div class="general-instruction-block"><b>Petunjuk Umum</b>${instructionList(paper.instructions)}</div>`;
+    groups.forEach((group, groupIndex) => {
+      const firstVariant = pack.types?.find(item => sectionType(item.type) === group.type)?.type;
+      const specific = paper.specificInstructions?.[group.type] || paper.specificInstructions?.[firstVariant] || defaultSpecificInstruction(group.type);
+      html += `<section class="question-group"><h2>${String.fromCharCode(65 + groupIndex)}. ${esc(specific)}</h2><ol class="question-list" start="${group.questions[0].number || questions.indexOf(group.questions[0]) + 1}">`;
+      group.questions.forEach(q => {
+        const rawImage = q.imageData || q.imageUrl || (q.imageSvg ? 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(q.imageSvg) : '');
+        const img = /^data:image\/(png|jpeg|webp|svg\+xml);/i.test(rawImage) || /^https:\/\//i.test(rawImage) ? `<img class="question-illustration" src="${esc(rawImage)}" alt="Ilustrasi soal">` : '';
+        html += `<li class="paper-question" value="${q.number || questions.indexOf(q) + 1}">${esc(q.question || '')}${q.options?.length ? `<ol class="answer-options" type="a">${q.options.map(option => `<li>${esc(option)}</li>`).join('')}</ol>` : ''}${img}</li>`;
+      });
+      html += '</ol></section>';
+    });
+    html += '</section>';
+    if (paper.includeBlueprint) html += `<section class="paper-page">${header('Kisi-kisi Soal')}<table class="blueprint-table"><thead><tr><th>No.</th><th>Tujuan Pembelajaran</th><th>Materi</th><th>Indikator Soal</th><th>Level Kognitif</th><th>Bentuk</th></tr></thead><tbody>${questions.map((q, i) => `<tr><td>${i + 1}</td><td>${esc(pack.objective || '')}</td><td>${esc(pack.material || '')}</td><td>${esc(q.indicator || q.question || '')}</td><td>${esc(q.bloom || pack.bloom?.[0] || '')}</td><td>${esc(q.type || '')}</td></tr>`).join('')}</tbody></table></section>`;
+    if (paper.includeKey) {
+      const mc = questions.map((q, i) => ({ q, number: q.number || i + 1 })).filter(x => String(x.q.type || '').startsWith('Pilihan ganda'));
+      const other = questions.map((q, i) => ({ q, number: q.number || i + 1 })).filter(x => !String(x.q.type || '').startsWith('Pilihan ganda'));
+      let rows = '';
+      for (let i = 0; i < mc.length; i += 10) { const left = mc.slice(i, i + 5), right = mc.slice(i + 5, i + 10); for (let j = 0; j < 5; j++) { const cell = x => { if (!x) return '<td></td><td></td>'; const m = String(x.q.answer || '').trim().match(/^[a-e](?=$|[\s.)-])/i); return `<td class="key-number">${x.number}</td><td class="key-answer">${esc(m ? m[0].toLowerCase() : '—')}</td>`; }; rows += `<tr>${cell(left[j])}${cell(right[j])}</tr>`; } }
+      html += `<section class="paper-page">${header('Kunci Jawaban')}${mc.length ? `<table class="answer-key-table"><thead><tr><th>No.</th><th>Kunci</th><th>No.</th><th>Kunci</th></tr></thead><tbody>${rows}</tbody></table>` : ''}${other.length ? `<h2 class="other-key-title">Kunci jawaban jenis soal lainnya</h2><ol class="other-key-list">${other.map(x => `<li value="${x.number}"><b>${esc(x.q.type || 'Soal')}:</b> ${esc(x.q.answer || '—')}</li>`).join('')}</ol>` : ''}</section>`;
+    }
+    return `<!doctype html><html><head><meta charset="utf-8"><style>${style}</style></head><body>${html}</body></html>`;
   }
-  function downloadWord() {
+  async function downloadWord() {
+    const button = $('#download-word'), label = button.innerHTML;
+    button.disabled = true; button.innerHTML = '<span class="button-spinner"></span> Menyiapkan Word…';
+    await new Promise(resolve => requestAnimationFrame(resolve));
+    try {
     const blob = new Blob(['\ufeff', wordDocument(generatedPack)], { type: 'application/msword' });
-    const link = document.createElement('a'); link.href = URL.createObjectURL(blob); link.download = `${safeFile(generatedPack.title)}.doc`; link.click(); setTimeout(() => URL.revokeObjectURL(link.href), 1000); countDownload();
+      const link = document.createElement('a'); link.href = URL.createObjectURL(blob); link.download = `${safeFile(generatedPack.title)}.doc`; link.click(); setTimeout(() => URL.revokeObjectURL(link.href), 1000); countDownload();
+    } finally { button.disabled = false; button.innerHTML = label; }
   }
   function safeFile(name = 'paket-soal') { return name.normalize('NFKD').replace(/[^\w\-]+/g, '-').replace(/^-|-$/g, '').toLowerCase() || 'paket-soal'; }
   function countDownload() { const key = `${STORE.downloads}.${profile?.email || 'preview'}`; write(key, read(key, 0) + 1); updateDashboard(); }
   async function savePack() {
     if (!generatedPack) return;
+    const button = $('#save-pack'), label = button.innerHTML;
+    button.disabled = true; button.innerHTML = '<span class="button-spinner"></span> Menyimpan…';
+    await new Promise(resolve => requestAnimationFrame(resolve));
     try {
       if (profile?.guest) { const index = packs.findIndex(p => p.id === generatedPack.id); if (index >= 0) packs[index] = generatedPack; else packs.unshift(generatedPack); write(STORE.packs, packs); toast('Paket tersimpan di perangkat ini saja.'); }
       else { const response = await callApi('savePack', { pack: generatedPack }); packs = [response.pack, ...packs.filter(p => p.id !== response.pack.id)]; toast('Paket tersimpan di akun Anda.'); }
       updateDashboard();
     } catch (error) { toast(error.message); }
+    finally { button.disabled = false; button.innerHTML = label; }
   }
   function showConfig() {
     $('#gas-url').value = config.gasUrl || '';
@@ -408,7 +450,7 @@
     $('#download-user-template').addEventListener('click', downloadUserTemplate);
     $('#refresh-users').addEventListener('click', loadAdminUsers);
     $('#save-pack').addEventListener('click', savePack); $('#download-word').addEventListener('click', downloadWord);
-    $('#print-pdf').addEventListener('click', () => { countDownload(); window.print(); });
+    $('#print-pdf').addEventListener('click', async event => { const button = event.currentTarget, label = button.innerHTML; button.disabled = true; button.innerHTML = '<span class="button-spinner"></span> Menyiapkan cetak…'; await new Promise(resolve => requestAnimationFrame(resolve)); countDownload(); window.print(); setTimeout(() => { button.disabled = false; button.innerHTML = label; }, 800); });
     $('#question-form').addEventListener('change', saveDraft);
   }
   document.addEventListener('DOMContentLoaded', init);
