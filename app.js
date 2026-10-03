@@ -35,14 +35,14 @@
     const frame = $('#gas-bridge');
     if (!frame) throw new Error('Frame koneksi Apps Script tidak ditemukan. Muat ulang aplikasi.');
     const frameName = 'ruangsoal-gas-bridge';
-    frame.name = frameName;
+    frame.setAttribute('name', frameName);
     const id = crypto.randomUUID();
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => { bridgeRequests.delete(id); reject(new Error('Permintaan ke Apps Script melewati batas waktu.')); }, 120000);
       bridgeRequests.set(id, { resolve, reject, timer });
       window.addEventListener('message', onBridgeMessage);
       const form = document.createElement('form');
-      form.method = 'post'; form.action = endpoint; form.target = frameName; form.hidden = true;
+      form.method = 'post'; form.action = endpoint; form.setAttribute('target', frameName); form.hidden = true;
       [[ 'id', id ], [ 'origin', window.location.origin ], [ 'request', JSON.stringify(request) ]].forEach(([name, value]) => {
         const input = document.createElement('input'); input.type = 'hidden'; input.name = name; input.value = value; form.appendChild(input);
       });
