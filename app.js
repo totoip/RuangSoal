@@ -11,6 +11,8 @@
   let profile = read(STORE.profile, null);
   let packs = read(STORE.packs, []);
   let generatedPack = null;
+  let schoolLogoData = '';
+  let schoolLogoPromise = Promise.resolve('');
   let toastTimer;
   const bridgeRequests = new Map();
 
@@ -232,9 +234,40 @@
     updateTotal();
   }
   function paperOptions() {
-    return { school: $('#school-name').value.trim() || 'Nama Sekolah', year: $('#school-year').value.trim(), title: $('#exam-title').value.trim() || 'Asesmen', semester: $('#semester').value, teacher: $('#teacher-name').value.trim(), duration: $('#duration').value.trim(), instructions: $('#instructions').value.trim() || 'Bacalah setiap soal dengan teliti.', includeKey: $('#include-key').checked, includeBlueprint: $('#include-blueprint').checked };
+    const specificInstructions = {};
+    $$('[data-specific-instruction]').forEach(input => { specificInstructions[input.dataset.specificInstruction] = input.value.trim(); });
+    return { government: $('#government-name')?.value.trim() || '', department: $('#department-name')?.value.trim() || '', school: $('#school-name')?.value.trim() || '', address: $('#school-address')?.value.trim() || '', contact: $('#school-contact')?.value.trim() || '', logo: schoolLogoData, year: $('#school-year')?.value.trim() || '', title: $('#exam-title')?.value.trim() || 'Asesmen', semester: $('#semester')?.value || '', date: $('#exam-date')?.value.trim() || '', duration: $('#duration')?.value.trim() || '', instructions: $('#instructions')?.value.trim() || 'Bacalah setiap soal dengan teliti.', specificInstructions, includeKey: $('#include-key').checked, includeBlueprint: $('#include-blueprint').checked };
   }
   function makePromptData() { return { ...formData(), paper: paperOptions() }; }
+  function defaultSpecificInstruction(type) {
+    if (type.startsWith('Pilihan ganda')) return 'Pilihlah satu jawaban yang paling tepat.';
+    if (type === 'Pilihan jamak') return 'Pilih semua jawaban yang benar.';
+    if (type === 'Isian singkat') return 'Isilah jawaban dengan singkat dan tepat.';
+    if (type === 'Uraian') return 'Jawablah pertanyaan dengan jelas dan sistematis.';
+    if (type === 'Benar / salah') return 'Tuliskan Benar atau Salah untuk setiap pernyataan.';
+    return 'Kerjakan soal berikut dengan teliti.';
+  }
+  function sectionType(type) { return type.startsWith('Pilihan ganda') ? 'Pilihan ganda' : type; }
+  function renderSpecificInstructions(types) {
+    const holder = $('#specific-instructions');
+    const previous = Object.fromEntries($$('[data-specific-instruction]', holder).map(input => [input.dataset.specificInstruction, input.value]));
+    const sections = [...new Set(types.map(group => sectionType(group.type)))];
+    holder.innerHTML = sections.map((type, index) => `<label class="field"><span>Petunjuk khusus ${String.fromCharCode(65 + index)} · ${esc(type)}</span><textarea rows="2" data-specific-instruction="${esc(type)}">${esc(previous[type] ?? defaultSpecificInstruction(type))}</textarea></label>`).join('');
+  }
+  function compressSchoolLogo(file) {
+    if (!file) return Promise.resolve('');
+    if (!/^image\/(png|jpeg|webp)$/.test(file.type) || file.size > 5 * 1024 * 1024) return Promise.reject(new Error('Logo harus berupa PNG, JPG, atau WebP maksimal 5 MB.'));
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onerror = () => reject(new Error('Logo tidak dapat dibaca.'));
+      reader.onload = () => {
+        const image = new Image(); image.onerror = () => reject(new Error('File logo tidak valid.'));
+        image.onload = () => { const scale = Math.min(1, 240 / image.width, 160 / image.height); const canvas = document.createElement('canvas'); canvas.width = Math.max(1, Math.round(image.width * scale)); canvas.height = Math.max(1, Math.round(image.height * scale)); const context = canvas.getContext('2d'); context.fillStyle = '#fff'; context.fillRect(0, 0, canvas.width, canvas.height); context.drawImage(image, 0, 0, canvas.width, canvas.height); resolve(canvas.toDataURL('image/jpeg', .78)); };
+        image.src = reader.result;
+      };
+      reader.readAsDataURL(file);
+    });
+  }
   function fallbackQuestions(data) {
     const result = [];
     data.types.forEach(group => { for (let i = 0; i < group.count; i++) result.push({ number: result.length + 1, type: group.type, question: `[Contoh pratinjau ${group.type.toLowerCase()} tentang ${data.material}]`, options: group.type.startsWith('Pilihan ganda') ? ['Pilihan jawaban A', 'Pilihan jawaban B', 'Pilihan jawaban C', ...(group.type.includes('D') ? ['Pilihan jawaban D'] : []), ...(group.type.includes('E') ? ['Pilihan jawaban E'] : [])] : [], answer: '', explanation: '', bloom: data.bloom[0] || '', indicator: '' }); });
@@ -245,37 +278,59 @@
     const result = await callBridge({ action: 'generate', token: profile?.idToken, payload: data }); if (!result?.ok) throw new Error(result?.error || 'Pembuatan soal gagal.');
     return { id: crypto.randomUUID(), ...data, paper: data.paper, questions: result.questions || [], createdAt: new Date().toISOString() };
   }
-  function renderResult(pack) {
-    const paper = pack.paper || paperOptions();
-    const content = $('#result-content');
-    const questions = pack.questions || [];
-    const header = (title) => `<h2>${esc(paper.school || 'Nama Sekolah')}</h2><div class="paper-meta">${esc(title || paper.title || 'Asesmen')}<br>${esc(pack.subject || '')} · ${esc(pack.grade || '')} ${paper.semester ? '· ' + esc(paper.semester) : ''} ${paper.year ? '· Tahun Ajaran ' + esc(paper.year) : ''}${paper.teacher ? '<br>Guru: ' + esc(paper.teacher) : ''}</div><hr>`;
-    let html = `<section class="paper-page question-page">${header(paper.title)}<div class="paper-details"><span>Nama: ______________________________</span><span>Kelas: _____________________</span><span>Hari/Tanggal: ____________________</span><span>Waktu: ${esc(paper.duration || '__________')}</span></div><p><b>Petunjuk:</b> ${esc(paper.instructions || '')}</p>`;
-    questions.forEach((q, index) => {
-      html += `<div class="paper-question"><b>${index + 1}.</b> ${esc(q.question || '')}`;
-      if (q.options?.length) html += `<ol class="answer-options" type="A">${q.options.map(option => `<li>${esc(option)}</li>`).join('')}</ol>`;
-      else html += '<p>Jawaban: __________________________________________________</p>';
-      if (q.imageDescription) html += `<p><i>[Ilustrasi: ${esc(q.imageDescription)}]</i></p>`;
-      html += '</div>';
-    });
-    html += '</section>';
-    if (paper.includeKey) html += `<section class="paper-page answer-page">${header('Kunci Jawaban')}<h3>Kunci Jawaban</h3><ol>${questions.map(q => `<li>${esc(q.answer || 'Perlu dilengkapi')} ${q.explanation ? '— ' + esc(q.explanation) : ''}</li>`).join('')}</ol></section>`;
-    if (paper.includeBlueprint) html += `<section class="paper-page blueprint-page">${header('Kisi-kisi Soal')}<h3>Kisi-kisi Soal</h3><div class="blueprint-table-wrap"><table><thead><tr><th>No.</th><th>Tujuan Pembelajaran</th><th>Materi</th><th>Indikator Soal</th><th>Level Kognitif</th><th>Bentuk</th></tr></thead><tbody>${questions.map((q, i) => `<tr><td>${i + 1}</td><td>${esc(pack.objective)}</td><td>${esc(pack.material)}</td><td>${esc(q.indicator || q.question || '')}</td><td>${esc(q.bloom || pack.bloom?.[0] || '')}</td><td>${esc(q.type || '')}</td></tr>`).join('')}</tbody></table></div></section>`;
-    content.innerHTML = html; $('#result-toolbar').hidden = false;
+  function examHeader(pack, paper, subtitle) {
+    const logo = paper.logo ? `<img class="school-logo" src="${esc(paper.logo)}" alt="Logo sekolah">` : '<span class="school-logo-placeholder" aria-hidden="true"></span>';
+    const identity = [paper.government, paper.department, paper.school].filter(Boolean).map((line, index) => `<div class="institution-line ${index === 2 ? 'school-name' : ''}">${esc(line)}</div>`).join('');
+    return `<header class="exam-header"><div class="institution-heading">${logo}<div class="institution-copy">${identity}<div class="institution-contact">${esc(paper.address || '')}${paper.address && paper.contact ? ' · ' : ''}${esc(paper.contact || '')}</div></div><span class="school-logo-placeholder right" aria-hidden="true"></span></div><div class="header-rule"></div><h1>${esc(paper.title || 'Asesmen')}</h1><div class="exam-semester">${esc(paper.semester || '')}${paper.year ? ' · Tahun Ajaran ' + esc(paper.year) : ''}</div>${subtitle ? `<div class="sheet-subtitle">${esc(subtitle)}</div>` : ''}<div class="exam-facts"><div><span>Mata Pelajaran</span><b>${esc(pack.subject || '—')}</b></div><div><span>Hari / Tanggal</span><b>${esc(paper.date || '____________________________')}</b></div><div><span>Kelas</span><b>${esc(pack.grade || '—')}</b></div><div><span>Alokasi Waktu</span><b>${esc(paper.duration || '________________')}</b></div></div></header>`;
   }
-  function wordDocument(pack) {
+  function orderedQuestionGroups(pack, questions) {
+    const order = (pack.types || []).map(group => sectionType(group.type));
+    questions.forEach(q => { const type = sectionType(q.type || 'Soal'); if (!order.includes(type)) order.push(type); });
+    return [...new Set(order)].map(type => ({ type, questions: questions.filter(q => sectionType(q.type || 'Soal') === type) })).filter(group => group.questions.length);
+  }
+  function instructionList(value) {
+    const items = String(value || '').split(/\r?\n/).map(item => item.replace(/^\s*\d+[.)]?\s*/, '').trim()).filter(Boolean);
+    return items.length ? `<ol class="general-instructions">${items.map(item => `<li>${esc(item)}</li>`).join('')}</ol>` : '';
+  }
+  function questionPaperHtml(pack) {
     const paper = pack.paper || {};
     const questions = pack.questions || [];
-    const header = title => `<h2>${esc(paper.school || 'Nama Sekolah')}</h2><p class="paper-meta">${esc(title)}<br>${esc(pack.subject || '')} · ${esc(pack.grade || '')} ${paper.semester ? '· ' + esc(paper.semester) : ''} ${paper.year ? '· Tahun Ajaran ' + esc(paper.year) : ''}${paper.teacher ? '<br>Guru: ' + esc(paper.teacher) : ''}</p><hr>`;
-    const questionHtml = questions.map((q, i) => `<div class="q"><p><b>${i + 1}.</b> ${esc(q.question || '')}</p>${q.options?.length ? `<ol type="A">${q.options.map(x => `<li>${esc(x)}</li>`).join('')}</ol>` : '<p>Jawaban: _________________________________</p>'}${q.imageDescription ? `<p><i>[Ilustrasi: ${esc(q.imageDescription)}]</i></p>` : ''}</div>`).join('');
-    let pages = `<section class="paper-page">${header(paper.title || 'Asesmen')}<p>Nama: __________________________　Kelas: __________　Tanggal: __________</p><p>Waktu: ${esc(paper.duration || '________')}<br><b>Petunjuk:</b> ${esc(paper.instructions || '')}</p>${questionHtml}</section>`;
-    if (paper.includeKey) pages += `<section class="paper-page">${header('Kunci Jawaban')}<h3>Kunci Jawaban</h3><ol>${questions.map(q => `<li>${esc(q.answer || 'Perlu dilengkapi')}${q.explanation ? ' — ' + esc(q.explanation) : ''}</li>`).join('')}</ol></section>`;
-    if (paper.includeBlueprint) pages += `<section class="paper-page">${header('Kisi-kisi Soal')}<h3>Kisi-kisi Soal</h3><table><tr><th>No.</th><th>Tujuan Pembelajaran</th><th>Materi</th><th>Indikator</th><th>Level</th><th>Bentuk</th></tr>${questions.map((q, i) => `<tr><td>${i + 1}</td><td>${esc(pack.objective)}</td><td>${esc(pack.material)}</td><td>${esc(q.indicator || q.question)}</td><td>${esc(q.bloom || '')}</td><td>${esc(q.type || '')}</td></tr>`).join('')}</table></section>`;
-    return `<!doctype html><html><head><meta charset="utf-8"><style>@page{size:A4;margin:18mm}body{font:11pt Arial;margin:0;color:#111}h1,h2{text-align:center}hr{border:0;border-top:3px double #000}table{border-collapse:collapse;width:100%;font-size:8pt;table-layout:fixed}td,th{border:1px solid #444;padding:5px;overflow-wrap:anywhere}li{margin:4px 0}.q{margin:13px 0;break-inside:avoid}.paper-page{break-after:page;page-break-after:always}.paper-page:last-child{break-after:auto;page-break-after:auto}.paper-meta{text-align:center}.paper-details{display:grid;grid-template-columns:1fr 1fr;gap:4px}</style></head><body>${pages}</body></html>`;
+    const groups = orderedQuestionGroups(pack, questions);
+    let html = `<section class="paper-page question-page">${examHeader(pack, paper)}<div class="general-instruction-block"><b>Petunjuk Umum</b>${instructionList(paper.instructions)}</div>`;
+    groups.forEach((group, groupIndex) => {
+      const firstVariant = pack.types?.find(item => sectionType(item.type) === group.type)?.type;
+      const specific = paper.specificInstructions?.[group.type] || paper.specificInstructions?.[firstVariant] || defaultSpecificInstruction(group.type);
+      html += `<section class="question-group"><h2><span>${String.fromCharCode(65 + groupIndex)}.</span> ${esc(specific)}</h2><ol class="question-list" start="${group.questions[0].number || questions.indexOf(group.questions[0]) + 1}">`;
+      group.questions.forEach(q => {
+        const imageSrc = q.imageData || q.imageUrl || (q.imageSvg ? 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(q.imageSvg) : '');
+        const safeImage = /^data:image\/(png|jpeg|webp|svg\+xml);/i.test(imageSrc) || /^https:\/\//i.test(imageSrc) ? imageSrc : '';
+        html += `<li class="paper-question" value="${q.number || questions.indexOf(q) + 1}"><div>${esc(q.question || '')}</div>${q.options?.length ? `<ol class="answer-options" type="a">${q.options.map(option => `<li>${esc(option)}</li>`).join('')}</ol>` : `<div class="response-lines ${q.type === 'Uraian' ? 'long-response' : ''}"></div>`}${safeImage ? `<img class="question-illustration" src="${esc(safeImage)}" alt="Ilustrasi soal">` : ''}</li>`;
+      });
+      html += '</ol></section>';
+    });
+    html += '</section>';
+    if (paper.includeBlueprint) html += `<section class="paper-page blueprint-page">${examHeader(pack, paper, 'Kisi-kisi Soal')}<table class="blueprint-table"><thead><tr><th>No.</th><th>Tujuan Pembelajaran</th><th>Materi</th><th>Indikator Soal</th><th>Level Kognitif</th><th>Bentuk</th></tr></thead><tbody>${questions.map((q, i) => `<tr><td>${i + 1}</td><td>${esc(pack.objective || '')}</td><td>${esc(pack.material || '')}</td><td>${esc(q.indicator || q.question || '')}</td><td>${esc(q.bloom || pack.bloom?.[0] || '')}</td><td>${esc(q.type || '')}</td></tr>`).join('')}</tbody></table></section>`;
+    if (paper.includeKey) {
+      const keyRows = [];
+      for (let i = 0; i < questions.length; i += 5) {
+        const chunk = questions.slice(i, i + 5);
+        keyRows.push(`<tr>${chunk.map((q, offset) => { const match = String(q.answer || '').trim().match(/^[a-e](?=$|[\s.)-])/i); const answer = q.type?.startsWith('Pilihan ganda') ? (match ? match[0].toLowerCase() : '—') : q.answer || '—'; return `<td class="key-number">${i + offset + 1}</td><td class="key-answer">${esc(answer)}</td>`; }).join('')}${Array.from({ length: 5 - chunk.length }, () => '<td></td><td></td>').join('')}</tr>`);
+      }
+      html += `<section class="paper-page answer-page">${examHeader(pack, paper, 'Kunci Jawaban')}<table class="answer-key-table"><thead><tr>${Array.from({ length: 5 }, () => '<th>No.</th><th>Kunci</th>').join('')}</tr></thead><tbody>${keyRows.join('')}</tbody></table><p class="key-note">Kunci pilihan ganda ditampilkan dengan huruf opsi.</p></section>`;
+    }
+    return html;
+  }
+  function renderResult(pack) {
+    $('#result-content').innerHTML = questionPaperHtml(pack);
+    $('#result-toolbar').hidden = false;
+  }
+  function wordDocument(pack) {
+    const style = `@page{size:21.5cm 33cm;margin:16mm 15mm}*{box-sizing:border-box}body{font:10.5pt/1.45 Arial,sans-serif;color:#111;margin:0}.paper-page{width:100%;page-break-after:always;break-after:page}.paper-page:last-child{page-break-after:auto;break-after:auto}.exam-header{text-align:center;margin-bottom:18px}.institution-heading{display:grid;grid-template-columns:72px 1fr 72px;align-items:center;gap:12px}.school-logo,.school-logo-placeholder{display:block;width:64px;height:64px;object-fit:contain;margin:auto}.institution-copy{font-weight:700}.institution-line{font-size:11pt;line-height:1.2}.institution-line.school-name{font-size:14pt;text-transform:uppercase}.institution-contact{font-size:8.5pt;font-weight:400;margin-top:4px}.header-rule{height:5px;border-top:1px solid #111;border-bottom:3px solid #111;margin:8px 0 12px}.exam-header h1{font-size:13pt;text-transform:uppercase;margin:0}.exam-semester{font-weight:700;font-size:10pt}.sheet-subtitle{font-weight:700;margin-top:3px}.exam-facts{display:grid;grid-template-columns:1fr 1fr;gap:5px 24px;text-align:left;margin-top:16px;font-size:9.5pt}.exam-facts>div{display:grid;grid-template-columns:105px 1fr;gap:8px}.general-instruction-block{margin:16px 0}.general-instruction-block>b{display:block}.general-instructions{margin:3px 0;padding-left:27px}.general-instructions li{padding-left:4px}.question-group{margin:15px 0}.question-group h2{font-size:10.5pt;margin:0 0 7px;display:flex;gap:8px}.question-list{padding-left:29px;margin:0}.paper-question{padding-left:3px;margin:0 0 13px;page-break-inside:avoid;break-inside:avoid}.answer-options{list-style-type:lower-alpha;padding-left:28px;margin:5px 0 0}.answer-options li{padding:1px 3px}.question-illustration{display:block;max-width:78%;max-height:250px;object-fit:contain;margin:9px auto}.response-lines{height:25px;border-bottom:1px dotted #999;margin:7px 0}.response-lines.long-response{height:100px;border-bottom:0;background:repeating-linear-gradient(to bottom,transparent 0,transparent 24px,#bbb 25px)}.blueprint-table,.answer-key-table{width:100%;border-collapse:collapse;table-layout:fixed;font-size:8.5pt}.blueprint-table th,.blueprint-table td,.answer-key-table th,.answer-key-table td{border:1px solid #555;padding:5px;vertical-align:top;overflow-wrap:anywhere}.blueprint-table th{background:#f0f2f1;text-align:center}.blueprint-table th:nth-child(1){width:5%}.blueprint-table th:nth-child(2){width:22%}.blueprint-table th:nth-child(3){width:15%}.blueprint-table th:nth-child(4){width:34%}.blueprint-table th:nth-child(5){width:12%}.blueprint-table th:nth-child(6){width:12%}.answer-key-table{font-size:10pt;margin-top:18px}.answer-key-table th{text-align:center;background:#f0f2f1}.answer-key-table td{text-align:center;height:32px}.answer-key-table .key-number{width:7%;font-weight:700}.answer-key-table .key-answer{width:13%;font-weight:700;text-transform:lowercase}.key-note{font-size:8pt;color:#555;margin-top:10px}`;
+    return `<!doctype html><html><head><meta charset="utf-8"><style>${style}</style></head><body>${questionPaperHtml(pack)}</body></html>`;
   }
   function downloadWord() {
     const blob = new Blob(['\ufeff', wordDocument(generatedPack)], { type: 'application/msword' });
-    const link = document.createElement('a'); link.href = URL.createObjectURL(blob); link.download = `${safeFile(generatedPack.title)}.doc`; link.click(); URL.revokeObjectURL(link.href); countDownload();
+    const link = document.createElement('a'); link.href = URL.createObjectURL(blob); link.download = `${safeFile(generatedPack.title)}.doc`; link.click(); setTimeout(() => URL.revokeObjectURL(link.href), 1000); countDownload();
   }
   function safeFile(name = 'paket-soal') { return name.normalize('NFKD').replace(/[^\w\-]+/g, '-').replace(/^-|-$/g, '').toLowerCase() || 'paket-soal'; }
   function countDownload() { const key = `${STORE.downloads}.${profile?.email || 'preview'}`; write(key, read(key, 0) + 1); updateDashboard(); }
@@ -307,9 +362,14 @@
     $('#signout-button').addEventListener('click', () => { profile = null; packs = []; generatedPack = null; $('#question-form').reset(); $('#result-content').replaceChildren(); $('#result-toolbar').hidden = true; page('beranda'); localStorage.removeItem(STORE.profile); showLogin(); });
     $('#question-form').addEventListener('input', event => { if (event.target.matches('.type-row input[type=number],.type-row input[type=checkbox]')) updateTotal(); else saveDraft(); });
     $('#question-form').addEventListener('change', () => { saveDraft(); updateTotal(); });
-    $('#question-form').addEventListener('submit', event => { event.preventDefault(); const data = formData(); if (!$('#question-form').reportValidity()) return; if (!data.bloom.length) { toast('Pilih minimal satu level Taksonomi Bloom.'); return; } if (!data.total || !data.types.length) { toast('Pilih minimal satu jenis soal dan isi jumlahnya.'); return; } if (data.total > 100) { toast('Jumlah seluruh soal maksimal 100 dalam satu paket.'); return; } page('naskah'); });
+    $('#question-form').addEventListener('submit', event => { event.preventDefault(); const data = formData(); if (!$('#question-form').reportValidity()) return; if (!data.bloom.length) { toast('Pilih minimal satu level Taksonomi Bloom.'); return; } if (!data.total || !data.types.length) { toast('Pilih minimal satu jenis soal dan isi jumlahnya.'); return; } if (data.total > 100) { toast('Jumlah seluruh soal maksimal 100 dalam satu paket.'); return; } renderSpecificInstructions(data.types); if (!$('#instructions').value.trim()) $('#instructions').value = '1. Berdoalah sebelum mengerjakan soal.\n2. Bacalah setiap soal dengan teliti.\n3. Periksa kembali jawaban sebelum dikumpulkan.'; page('naskah'); });
+    $('#school-logo').addEventListener('change', event => {
+      const preview = $('#school-logo-preview');
+      preview.hidden = true;
+      schoolLogoPromise = compressSchoolLogo(event.target.files[0]).then(data => { schoolLogoData = data; preview.src = data; preview.hidden = !data; return data; }).catch(error => { schoolLogoData = ''; event.target.value = ''; preview.hidden = true; toast(error.message); return ''; });
+    });
     $('#paper-form').addEventListener('submit', async event => {
-      event.preventDefault(); const data = makePromptData(); page('hasil');
+      event.preventDefault(); await schoolLogoPromise; const data = makePromptData(); page('hasil');
       const attemptGeneration = async () => {
         $('#result-toolbar').hidden = true; $('#generation-status').hidden = false; $('#generation-status').className = 'notice is-info is-loading'; $('#generation-status').setAttribute('role', 'status'); $('#generation-status').textContent = 'Gemini sedang menyusun soal. Proses ini bisa memerlukan waktu hingga satu menit…'; $('#result-content').innerHTML = '';
         try {
