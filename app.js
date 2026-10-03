@@ -136,19 +136,47 @@
       holder.innerHTML = `<table class="users-table"><thead><tr><th>Nama</th><th>Email</th><th>Peran</th><th>Status</th></tr></thead><tbody>${response.users.map(user => `<tr><td>${esc(user.name)}</td><td>${esc(user.email)}</td><td><span class="role-pill">${user.role === 'admin' ? 'Admin' : 'Pengguna'}</span></td><td>${user.status === 'active' ? 'Aktif' : 'Nonaktif'}</td></tr>`).join('')}</tbody></table>`;
     } catch (error) { holder.textContent = error.message; }
   }
-  function parseCsv(text) {
+  function parseCsv(text, defaultRole = 'user') {
+    text = text.replace(/^\uFEFF/, '').trim();
+    let delimiter = ';';
+    const firstLine = text.split(/\r?\n/, 1)[0];
+    const separatorHint = firstLine.match(/^sep=(.)$/i);
+    if (separatorHint) { delimiter = separatorHint[1]; text = text.slice(firstLine.length).replace(/^\r?\n/, ''); }
+    else {
+      const counts = [',', ';', '\t'].map(char => { let quoted = false, count = 0; for (const c of firstLine) { if (c === '"') quoted = !quoted; else if (c === char && !quoted) count++; } return { char, count }; }).sort((a, b) => b.count - a.count);
+      if (counts[0].count) delimiter = counts[0].char;
+    }
     const rows = []; let row = [], cell = '', quoted = false;
     for (let i = 0; i < text.length; i++) {
       const char = text[i];
       if (char === '"' && quoted && text[i + 1] === '"') { cell += '"'; i++; }
       else if (char === '"') quoted = !quoted;
-      else if (char === ',' && !quoted) { row.push(cell.trim()); cell = ''; }
+      else if (char === delimiter && !quoted) { row.push(cell.trim()); cell = ''; }
       else if ((char === '\n' || char === '\r') && !quoted) { if (char === '\r' && text[i + 1] === '\n') i++; row.push(cell.trim()); if (row.some(Boolean)) rows.push(row); row = []; cell = ''; }
       else cell += char;
     }
     row.push(cell.trim()); if (row.some(Boolean)) rows.push(row);
-    if (rows[0]?.[0]?.toLowerCase() === 'email') rows.shift();
-    return rows.map(cols => ({ email: cols[0] || '', name: cols[1] || (cols[0] || '').split('@')[0], role: (cols[2] || 'user').toLowerCase() === 'admin' ? 'admin' : 'user' })).filter(user => user.email);
+    const normalize = value => String(value || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z]/g, '');
+    const headings = (rows[0] || []).map(normalize);
+    const findColumn = names => headings.findIndex(value => names.includes(value));
+    const nameColumn = findColumn(['nama', 'namalengkap', 'name', 'fullname']);
+    const emailColumn = findColumn(['email', 'emailgoogle', 'alamatemail']);
+    const roleColumn = findColumn(['peran', 'role', 'hakakses', 'jenisakun']);
+    const hasHeader = nameColumn >= 0 || emailColumn >= 0 || roleColumn >= 0;
+    if (hasHeader) rows.shift();
+    const nameIndex = hasHeader ? nameColumn : 0;
+    const emailIndex = hasHeader ? emailColumn : 1;
+    const roleIndex = hasHeader ? roleColumn : 2;
+    return rows.filter(cols => cols.some(Boolean)).map(cols => {
+      const roleValue = String(roleIndex >= 0 ? cols[roleIndex] || '' : '').trim().toLowerCase();
+      const role = ['admin', 'administrator'].includes(roleValue) ? 'admin' : ['pengguna', 'user', 'guru'].includes(roleValue) ? 'user' : defaultRole;
+      return { name: nameIndex >= 0 ? cols[nameIndex] || '' : '', email: emailIndex >= 0 ? cols[emailIndex] || '' : '', role };
+    });
+  }
+  function downloadUserTemplate() {
+    const csv = '\uFEFFsep=;\r\nNama;Email;Peran\r\n';
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+    const link = document.createElement('a'); link.href = URL.createObjectURL(blob); link.download = 'format-impor-pengguna.csv'; link.click(); setTimeout(() => URL.revokeObjectURL(link.href), 1000);
   }
   function updateDashboard() {
     const total = packs.reduce((sum, pack) => sum + (pack.questions?.length || pack.total || 0), 0);
@@ -282,24 +310,42 @@
     $('#question-form').addEventListener('submit', event => { event.preventDefault(); const data = formData(); if (!$('#question-form').reportValidity()) return; if (!data.bloom.length) { toast('Pilih minimal satu level Taksonomi Bloom.'); return; } if (!data.total || !data.types.length) { toast('Pilih minimal satu jenis soal dan isi jumlahnya.'); return; } if (data.total > 100) { toast('Jumlah seluruh soal maksimal 100 dalam satu paket.'); return; } page('naskah'); });
     $('#paper-form').addEventListener('submit', async event => {
       event.preventDefault(); const data = makePromptData(); page('hasil');
-      $('#result-toolbar').hidden = true; $('#generation-status').hidden = false; $('#generation-status').className = 'notice is-info is-loading'; $('#generation-status').setAttribute('role', 'status'); $('#generation-status').textContent = 'Gemini sedang menyusun soal. Proses ini bisa memerlukan waktu hingga satu menit…'; $('#result-content').innerHTML = '';
-      try {
-        generatedPack = await generate(data); generatedPack.title = `${data.subject} · ${data.material}`;
-        renderResult(generatedPack); $('#generation-status').hidden = generatedPack.demo ? false : true;
-        if (generatedPack.demo) { $('#generation-status').className = 'notice is-info'; $('#generation-status').innerHTML = '<b>Mode pratinjau:</b> Contoh ini belum dibuat AI. Hubungkan URL Apps Script untuk mengaktifkan generator.'; }
-      } catch (error) { $('#generation-status').hidden = false; $('#generation-status').className = 'notice is-error'; $('#generation-status').innerHTML = `<b>Belum berhasil membuat soal.</b> ${esc(error.message || 'Terjadi kesalahan. Silakan coba lagi.')}`; }
+      const attemptGeneration = async () => {
+        $('#result-toolbar').hidden = true; $('#generation-status').hidden = false; $('#generation-status').className = 'notice is-info is-loading'; $('#generation-status').setAttribute('role', 'status'); $('#generation-status').textContent = 'Gemini sedang menyusun soal. Proses ini bisa memerlukan waktu hingga satu menit…'; $('#result-content').innerHTML = '';
+        try {
+          generatedPack = await generate(data); generatedPack.title = `${data.subject} · ${data.material}`;
+          renderResult(generatedPack); $('#generation-status').hidden = generatedPack.demo ? false : true;
+          if (generatedPack.demo) { $('#generation-status').className = 'notice is-info'; $('#generation-status').innerHTML = '<b>Mode pratinjau:</b> Contoh ini belum dibuat AI. Hubungkan URL Apps Script untuk mengaktifkan generator.'; }
+        } catch (error) {
+          $('#generation-status').hidden = false; $('#generation-status').className = 'notice is-error';
+          $('#generation-status').innerHTML = `<div><b>Belum berhasil membuat soal.</b> ${esc(error.message || 'Terjadi kesalahan. Silakan coba lagi.')}<div class="retry-row"><button id="retry-generation" class="button secondary" type="button"><svg><use href="#i-refresh"/></svg>Coba lagi</button></div></div>`;
+          $('#retry-generation').addEventListener('click', attemptGeneration, { once: true });
+        }
+      };
+      await attemptGeneration();
     });
     $('#settings-page').addEventListener('click', event => { if (event.target.matches('[data-refresh-config]')) showConfig(); });
     $('#add-user-form').addEventListener('submit', async event => {
       event.preventDefault();
-      try { await callApi('addUser', { user: { name: $('#new-user-name').value.trim(), email: $('#new-user-email').value.trim(), role: $('#new-user-role').value } }); event.target.reset(); toast('Pengguna ditambahkan.'); loadAdminUsers(); }
-      catch (error) { toast(error.message); }
+      const button = $('#add-user-submit'), status = $('#add-user-status');
+      button.disabled = true; button.innerHTML = '<span class="button-spinner"></span> Menambahkan pengguna…'; status.textContent = 'Sedang menyimpan akun. Mohon tunggu agar tidak terjadi input ganda.';
+      try { await callApi('addUser', { user: { name: $('#new-user-name').value.trim(), email: $('#new-user-email').value.trim(), role: $('#new-user-role').value } }); event.target.reset(); status.textContent = 'Pengguna berhasil ditambahkan.'; toast('Pengguna ditambahkan.'); loadAdminUsers(); }
+      catch (error) { status.textContent = 'Belum berhasil menambahkan pengguna: ' + error.message; }
+      finally { button.disabled = false; button.textContent = 'Tambah pengguna'; }
     });
     $('#import-users').addEventListener('click', async () => {
-      const file = $('#user-csv').files[0]; if (!file) { toast('Pilih file CSV terlebih dahulu.'); return; }
-      try { const users = parseCsv((await file.text()).replace(/^\uFEFF/, '')); const result = await callApi('importUsers', { users }); $('#import-status').textContent = `${result.imported.added} ditambahkan, ${result.imported.updated} diperbarui, ${result.imported.skipped} dilewati.`; loadAdminUsers(); }
-      catch (error) { $('#import-status').textContent = error.message; }
+      const file = $('#user-csv').files[0]; if (!file) { $('#import-status').textContent = 'Pilih berkas CSV terlebih dahulu.'; return; }
+      const button = $('#import-users'), status = $('#import-status'); button.disabled = true; button.innerHTML = '<span class="button-spinner"></span> Menyiapkan impor…'; status.textContent = 'Sedang membaca dan memeriksa berkas…';
+      try {
+        const users = parseCsv(await file.text(), $('#import-default-role').value);
+        if (!users.length) throw new Error('Berkas belum berisi data pengguna.');
+        status.textContent = `Sedang mengimpor ${users.length} baris pengguna. Mohon tunggu…`; button.innerHTML = '<span class="button-spinner"></span> Mengimpor pengguna…';
+        const result = await callApi('importUsers', { users });
+        status.textContent = `Impor selesai: ${result.imported.added} ditambahkan, ${result.imported.updated} diperbarui, ${result.imported.skipped} dilewati.`; loadAdminUsers();
+      } catch (error) { status.textContent = 'Impor belum berhasil: ' + error.message; }
+      finally { button.disabled = false; button.textContent = 'Impor pengguna'; }
     });
+    $('#download-user-template').addEventListener('click', downloadUserTemplate);
     $('#refresh-users').addEventListener('click', loadAdminUsers);
     $('#save-pack').addEventListener('click', savePack); $('#download-word').addEventListener('click', downloadWord);
     $('#print-pdf').addEventListener('click', () => { countDownload(); window.print(); });
