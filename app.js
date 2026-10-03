@@ -105,7 +105,12 @@
       const session = await callApi('me');
       profile = { ...profile, ...session.user, idToken: response.credential };
       await refreshPacks(); write(STORE.profile, profile); $('#question-form').reset(); restoreDraft(); showSignedIn(); page('beranda'); toast('Berhasil masuk.');
-    } catch (err) { profile = null; toast(err.message || 'Login gagal.'); }
+    } catch (err) {
+      profile = null;
+      const message = err && err.message ? err.message : 'Login gagal. Coba muat ulang halaman.';
+      $('#login-hint').textContent = 'Login belum berhasil: ' + message;
+      toast(message);
+    }
   }
   async function refreshPacks() {
     if (profile?.guest) { packs = read(STORE.packs, []); return; }
