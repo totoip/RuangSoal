@@ -7,9 +7,11 @@
   const write = (key, value) => localStorage.setItem(key, JSON.stringify(value));
   const esc = (value = '') => String(value).replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
   function mathMarkup(value) {
-    let text = String(value || '').replace(/\\times\b/g, '×').replace(/\\cdot\b/g, '·').replace(/\\div\b/g, '÷');
-    text = text.replace(/\\frac\{([^{}]+)\}\{([^{}]+)\}/g, '<span class="math-frac"><span>$1</span><span>$2</span></span>');
-    text = text.replace(/(?<![\w/])(\d+)\s*\/\s*(\d+)(?![\w/])/g, '<span class="math-frac"><span>$1</span><span>$2</span></span>');
+    let text = String(value || '').replace(/\\left\b|\\right\b/g, '').replace(/\\times\b/g, '×').replace(/\\cdot\b/g, '·').replace(/\\div\b/g, '÷').replace(/\\leq?\b/g, '≤').replace(/\\geq?\b/g, '≥').replace(/\\neq\b/g, '≠').replace(/\\pm\b/g, '±').replace(/\\pi\b/g, 'π');
+    const fraction = (numerator, denominator) => `<span class="math-frac"><sup>${numerator}</sup>⁄<sub>${denominator}</sub></span>`;
+    text = text.replace(/\\(?:d|t)?frac\{([^{}]+)\}\{([^{}]+)\}/g, (_, numerator, denominator) => fraction(numerator, denominator));
+    text = text.replace(/(?<![\w/])(\d+)\s*\/\s*(\d+)(?![\w/])/g, (_, numerator, denominator) => fraction(numerator, denominator));
+    text = text.replace(/\\sqrt\{([^{}]+)\}/g, '√$1').replace(/\\sqrt\[(\d+)\]\{([^{}]+)\}/g, '$1√$2');
     text = text.replace(/([A-Za-z0-9])\^\{([^{}]+)\}/g, '$1<sup>$2</sup>').replace(/([A-Za-z0-9])\^([0-9+-]+)/g, '$1<sup>$2</sup>');
     text = text.replace(/([A-Za-z0-9])_\{([^{}]+)\}/g, '$1<sub>$2</sub>').replace(/([A-Za-z0-9])_([0-9]+)/g, '$1<sub>$2</sub>');
     return text;
