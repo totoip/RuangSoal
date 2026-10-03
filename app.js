@@ -297,7 +297,7 @@
     const questions = pack.questions || [];
     const groups = orderedQuestionGroups(pack, questions);
     let html = `<section class="paper-page question-page">${examHeader(pack, paper)}<div class="general-instruction-block"><b>Petunjuk Umum</b>${instructionList(paper.instructions)}</div>`;
-    groups.forEach((group, groupIndex) => {
+    for (const [groupIndex, group] of groups.entries()) {
       const firstVariant = pack.types?.find(item => sectionType(item.type) === group.type)?.type;
       const specific = paper.specificInstructions?.[group.type] || paper.specificInstructions?.[firstVariant] || defaultSpecificInstruction(group.type);
       html += `<section class="question-group"><h2><span>${String.fromCharCode(65 + groupIndex)}.</span> ${esc(specific)}</h2><ol class="question-list" start="${group.questions[0].number || questions.indexOf(group.questions[0]) + 1}">`;
@@ -307,7 +307,7 @@
         html += `<li class="paper-question" value="${q.number || questions.indexOf(q) + 1}"><div>${esc(q.question || '')}</div>${q.options?.length ? `<ol class="answer-options" type="a">${q.options.map(option => `<li>${esc(option)}</li>`).join('')}</ol>` : ''}${safeImage ? `<img class="question-illustration" src="${esc(safeImage)}" alt="Ilustrasi soal">` : ''}</li>`;
       });
       html += '</ol></section>';
-    });
+    }
     html += '</section>';
     if (paper.includeBlueprint) html += `<section class="paper-page blueprint-page">${examHeader(pack, paper, 'Kisi-kisi Soal')}<table class="blueprint-table"><thead><tr><th>No.</th><th>Tujuan Pembelajaran</th><th>Materi</th><th>Indikator Soal</th><th>Level Kognitif</th><th>Bentuk</th></tr></thead><tbody>${questions.map((q, i) => `<tr><td>${i + 1}</td><td>${esc(pack.objective || '')}</td><td>${esc(pack.material || '')}</td><td>${esc(q.indicator || q.question || '')}</td><td>${esc(q.bloom || pack.bloom?.[0] || '')}</td><td>${esc(q.type || '')}</td></tr>`).join('')}</tbody></table></section>`;
     if (paper.includeKey) {
@@ -341,7 +341,7 @@
     };
     let html = '';
     let questionBody = '';
-    groups.forEach((group, groupIndex) => {
+    for (const [groupIndex, group] of groups.entries()) {
       const firstVariant = pack.types?.find(item => sectionType(item.type) === group.type)?.type;
       const specific = paper.specificInstructions?.[group.type] || paper.specificInstructions?.[firstVariant] || defaultSpecificInstruction(group.type);
       questionBody += `<section class="question-group"><h2>${String.fromCharCode(65 + groupIndex)}. ${esc(specific)}</h2><ol class="question-list" start="${group.questions[0].number || questions.indexOf(group.questions[0]) + 1}">`;
@@ -357,7 +357,7 @@
         questionBody += `<li class="paper-question" value="${q.number || questions.indexOf(q) + 1}">${esc(q.question || '')}${q.options?.length ? `<ol class="answer-options" type="a">${q.options.map(option => `<li>${esc(option)}</li>`).join('')}</ol>` : ''}${img}</li>`;
       }
       questionBody += '</ol></section>';
-    });
+    }
     html = page(`${header('')}<div class="general-instruction-block"><b>Petunjuk Umum</b>${instructionList(paper.instructions)}</div>${questionBody}`, true);
     if (paper.includeBlueprint) html += page(`${header('Kisi-kisi Soal')}<table class="blueprint-table"><thead><tr><th>No.</th><th>Tujuan Pembelajaran</th><th>Materi</th><th>Indikator Soal</th><th>Level Kognitif</th><th>Bentuk</th></tr></thead><tbody>${questions.map((q, i) => `<tr><td>${i + 1}</td><td>${esc(pack.objective || '')}</td><td>${esc(pack.material || '')}</td><td>${esc(q.indicator || q.question || '')}</td><td>${esc(q.bloom || pack.bloom?.[0] || '')}</td><td>${esc(q.type || '')}</td></tr>`).join('')}</tbody></table>`);
     if (paper.includeKey) {
